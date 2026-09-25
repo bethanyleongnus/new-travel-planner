@@ -190,16 +190,27 @@ Write a relaxing, warm, concise response (2-3 short paragraphs max).
 });
 
 
-// Status check (Never exposes any API key or secret token)
-apiRouter.get('/status', (_req: Request, res: Response) => {
+// Status and Health check (Never exposes any API key or secret token)
+apiRouter.get(['/status', '/health', '/mcp/health'], (_req: Request, res: Response) => {
   res.json({
     status: 'online',
+    healthy: true,
+    mcpConnected: true,
     server: 'plantrip-mcp-server',
+    serverInfo: {
+      name: 'plantrip-mcp-server',
+      title: 'PlanTrip AI Travel Planner MCP',
+      version: '1.0.0'
+    },
     version: '1.0.0',
     toolsCount: MCP_TOOLS_METADATA.length,
     hasPlantripKey: Boolean(process.env.PLANTRIP_API_KEY),
     protocol: 'model-context-protocol/1.0',
-    uptime: process.uptime()
+    protocolVersion: '2024-11-05',
+    mcpPath: '/api/mcp',
+    tools: MCP_TOOLS_METADATA.map(t => t.name),
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -209,12 +220,15 @@ export async function mcpEndpointHandler(req: Request, res: Response) {
   if (req.method === 'GET') {
     return res.status(200).json({
       status: 'online',
+      healthy: true,
+      mcpConnected: true,
       serverInfo: {
         name: 'plantrip-mcp-server',
         title: 'PlanTrip AI Travel Planner MCP',
         version: '1.0.0'
       },
       protocolVersion: '2024-11-05',
+      protocol: 'model-context-protocol/1.0',
       mcpPath: '/api/mcp',
       toolsCount: MCP_TOOLS_METADATA.length,
       tools: MCP_TOOLS_METADATA.map(t => ({

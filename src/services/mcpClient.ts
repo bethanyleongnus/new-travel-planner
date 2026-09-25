@@ -19,67 +19,114 @@ export class McpClientService {
    * Fetch server status & MCP connection
    */
   static async getStatus(): Promise<ServerStatus> {
-    try {
-      const res = await fetch('/api/status');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
-    } catch {
-      return {
-        status: 'online',
-        server: 'plantrip-mcp-server',
-        version: '1.0.0',
-        toolsCount: 14,
-        hasPlantripKey: false,
-        protocol: 'model-context-protocol/1.0',
-        uptime: 0
-      };
+    const endpoints = ['/api/mcp', '/api/health', '/api/status'];
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(ep);
+        if (res.ok) {
+          const data = await res.json();
+          return {
+            status: data.status || 'online',
+            server: data.serverInfo?.name || data.server || 'plantrip-mcp-server',
+            version: data.serverInfo?.version || data.version || '1.0.0',
+            toolsCount: data.toolsCount || (Array.isArray(data.tools) ? data.tools.length : 14),
+            hasPlantripKey: Boolean(data.hasPlantripKey),
+            protocol: data.protocol || 'model-context-protocol/1.0',
+            uptime: data.uptime || 0
+          };
+        }
+      } catch {
+        // try next endpoint
+      }
     }
+
+    return {
+      status: 'online',
+      server: 'plantrip-mcp-server',
+      version: '1.0.0',
+      toolsCount: 14,
+      hasPlantripKey: false,
+      protocol: 'model-context-protocol/1.0',
+      uptime: 0
+    };
   }
 
   /**
    * Fetch list of registered MCP tools
    */
   static async getTools(): Promise<McpToolMeta[]> {
-    try {
-      const res = await fetch('/api/mcp/tools');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      return data.tools || [];
-    } catch {
-      return [
-        { name: 'create_itinerary', description: 'Create a new travel itinerary' },
-        { name: 'get_itinerary_status', description: 'Poll generation status' },
-        { name: 'get_itinerary', description: 'Retrieve complete itinerary' },
-        { name: 'modify_itinerary', description: 'Modify with natural language' },
-        { name: 'list_user_trips', description: 'List saved trips' },
-        { name: 'save_itinerary', description: "Save to user's trips" },
-        { name: 'delete_trip', description: 'Remove from saved trips' },
-        { name: 'generate_packing_list', description: 'AI packing list' },
-        { name: 'ask_travel_expert', description: 'Travel Q&A' },
-        { name: 'get_weather_insights', description: 'Weather/climate info' },
-        { name: 'estimate_trip_cost', description: 'Budget breakdown' },
-        { name: 'search_guides', description: 'Search travel guides' },
-        { name: 'get_tour_availability', description: 'Check tour dates' },
-        { name: 'submit_tour_inquiry', description: 'Tour booking inquiry' }
-      ];
+    const endpoints = ['/api/mcp/tools', '/api/mcp'];
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(ep);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.tools) && data.tools.length > 0) {
+            return data.tools;
+          }
+        }
+      } catch {
+        // try next endpoint
+      }
     }
+
+    return [
+      { name: 'create_itinerary', description: 'Create a new travel itinerary' },
+      { name: 'get_itinerary_status', description: 'Poll generation status' },
+      { name: 'get_itinerary', description: 'Retrieve complete itinerary' },
+      { name: 'modify_itinerary', description: 'Modify with natural language' },
+      { name: 'list_user_trips', description: 'List saved trips' },
+      { name: 'save_itinerary', description: "Save to user's trips" },
+      { name: 'delete_trip', description: 'Remove from saved trips' },
+      { name: 'generate_packing_list', description: 'AI packing list' },
+      { name: 'ask_travel_expert', description: 'Travel Q&A' },
+      { name: 'get_weather_insights', description: 'Weather/climate info' },
+      { name: 'estimate_trip_cost', description: 'Budget breakdown' },
+      { name: 'search_guides', description: 'Search travel guides' },
+      { name: 'get_tour_availability', description: 'Check tour dates' },
+      { name: 'submit_tour_inquiry', description: 'Tour booking inquiry' }
+    ];
   }
 
   /**
-   * Execute raw MCP tool call by name
+   * Execute raw MCP tool call by name with automatic fallback
    */
   static async callTool<T = any>(tool: string, args: Record<string, any> = {}): Promise<T> {
-    const res = await fetch('/api/mcp/call', {
+    try {
+      const res = await fetch('/api/mcp/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool, arguments: args })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.result as T;
+      }
+    } catch {
+      // Fallback to JSON-RPC /api/mcp
+    }
+
+    const rpcRes = await fetch('/api/mcp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tool, arguments: args })
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'tools/call',
+        params: { name: tool, arguments: args }
+      })
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error(err.error || `Failed to execute ${tool}`);
+
+    if (!rpcRes.ok) {
+      const err = await rpcRes.json().catch(() => ({ error: `HTTP ${rpcRes.status}` }));
+      throw new Error(err.error?.message || err.error || `Failed to execute ${tool}`);
     }
-    const data = await res.json();
-    return data.result as T;
+
+    const rpcData = await rpcRes.json();
+    if (rpcData.error) {
+      throw new Error(rpcData.error.message || `RPC error calling ${tool}`);
+    }
+    return (rpcData.result?.structuredContent ?? rpcData.result) as T;
   }
 
   // ================= 14 SPECIALIZED TOOL WRAPPERS =================
