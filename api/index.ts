@@ -203,6 +203,133 @@ apiRouter.get('/status', (_req: Request, res: Response) => {
   });
 });
 
+// Primary Model Context Protocol (MCP) endpoint (/api/mcp)
+export async function mcpEndpointHandler(req: Request, res: Response) {
+  // Method validation
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      status: 'online',
+      serverInfo: {
+        name: 'plantrip-mcp-server',
+        title: 'PlanTrip AI Travel Planner MCP',
+        version: '1.0.0'
+      },
+      protocolVersion: '2024-11-05',
+      mcpPath: '/api/mcp',
+      toolsCount: MCP_TOOLS_METADATA.length,
+      tools: MCP_TOOLS_METADATA.map(t => ({
+        name: t.name,
+        description: t.description
+      })),
+      instructions: 'Connect using standard Model Context Protocol over HTTP/POST. Supports JSON-RPC 2.0 initialize, notifications/initialized, ping, tools/list, and tools/call.'
+    });
+  }
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST, GET');
+    return res.status(405).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Method not allowed. Send MCP messages with POST or query discovery with GET.' },
+      id: null
+    });
+  }
+
+  try {
+    const { jsonrpc = '2.0', id = 1, method, params = {} } = req.body || {};
+
+    if (!method) {
+      return res.status(400).json({
+        jsonrpc: '2.0',
+        id: id ?? null,
+        error: { code: -32600, message: 'Invalid Request: Missing "method" field' }
+      });
+    }
+
+    if (method === 'initialize') {
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          protocolVersion: params.protocolVersion || '2024-11-05',
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: {
+            name: 'plantrip-mcp-server',
+            title: 'PlanTrip AI Travel Planner MCP',
+            version: '1.0.0'
+          }
+        }
+      });
+    }
+
+    if (method === 'notifications/initialized' || method === 'initialized') {
+      return res.status(200).json({
+        jsonrpc: '2.0',
+        id: null,
+        result: {}
+      });
+    }
+
+    if (method === 'ping') {
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {}
+      });
+    }
+
+    if (method === 'tools/list') {
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          tools: MCP_TOOLS_METADATA.map(t => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: { type: 'object', properties: {} }
+          }))
+        }
+      });
+    }
+
+    if (method === 'tools/call') {
+      const { name, arguments: toolArgs = {} } = params;
+      const handler = MCP_TOOLS_REGISTRY[name];
+      if (!handler) {
+        return res.status(404).json({
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32601, message: `Tool "${name}" not found in MCP registry` }
+        });
+      }
+
+      const output = await handler(toolArgs);
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: JSON.stringify(output, null, 2) }],
+          structuredContent: output
+        }
+      });
+    }
+
+    return res.status(400).json({
+      jsonrpc: '2.0',
+      id,
+      error: { code: -32601, message: `Method "${method}" not implemented` }
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      jsonrpc: '2.0',
+      id: req.body?.id ?? null,
+      error: { code: -32603, message: err?.message || 'Internal MCP error' }
+    });
+  }
+}
+
+// Mount /mcp
+apiRouter.all('/mcp', mcpEndpointHandler);
+
 // List all 14 MCP tools
 apiRouter.get('/mcp/tools', (_req: Request, res: Response) => {
   res.json({
