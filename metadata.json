@@ -1,0 +1,6 @@
+{
+  "name": "PlanTrip - AI Travel Planner & Itinerary Studio",
+  "description": "One-stop travel planner powered by PlanTrip MCP tools. Create detailed itineraries, estimate costs, generate packing lists, check weather, explore guides, and organize saved trips.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
